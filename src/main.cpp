@@ -1,16 +1,20 @@
+// --- Modo de Teste (Mock) ---
+#define MOCK_MODE true // Altere para false para usar o NodeMCU real
+
 #include <Arduino.h>
+// ...existing code...
 #include <ESP8266WiFi.h>
-#include <WebSocketsClient.h> // A biblioteca que acabamos de adicionar
+#include <WebSocketsClient.h>
+#include "env.h"
 
 // --- Configurações de Rede ---
-const char* WIFI_SSID = "SuaRedeWiFi";
-const char* WIFI_PASS = "SuaSenha";
+String WIFI_SSID;
+String WIFI_PASS;
 
 // --- Configurações do Servidor ---
-// Mude para o IP ou domínio do seu servidor
-const char* SERVER_HOST = "192.168.1.100"; 
-const uint16_t SERVER_PORT = 8080;
-const char* SERVER_PATH = "/"; // O "endpoint" do seu WebSocket (ex: "/ws")
+String SERVER_HOST;
+uint16_t SERVER_PORT;
+String SERVER_PATH;
 
 // --- Configurações de Hardware ---
 // O pino onde você ligou o divisor de tensão
@@ -62,13 +66,11 @@ void setupWifi() {
   Serial.print("Conectando ao Wi-Fi: ");
   Serial.println(WIFI_SSID);
 
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  
+  WiFi.begin(WIFI_SSID.c_str(), WIFI_PASS.c_str());
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  
   Serial.println("\nWi-Fi conectado!");
   Serial.print("Endereço IP: ");
   Serial.println(WiFi.localIP());
@@ -81,6 +83,19 @@ void setup() {
   Serial.begin(115200); // Inicia o monitor serial (para debug)
   Serial.println("\n[SETUP] Iniciando sistema...");
 
+  // Inicializa SPIFFS para ler o .env
+  if (!SPIFFS.begin()) {
+    Serial.println("[ERRO] Falha ao montar SPIFFS!");
+    while (1);
+  }
+
+  // Carrega variáveis do .env
+  WIFI_SSID = getEnv("WIFI_SSID");
+  WIFI_PASS = getEnv("WIFI_PASS");
+  SERVER_HOST = getEnv("SERVER_HOST");
+  SERVER_PORT = getEnv("SERVER_PORT").toInt();
+  SERVER_PATH = getEnv("SERVER_PATH");
+
   // Configura o pino do sensor como ENTRADA
   pinMode(SENSOR_PIN, INPUT); 
   ultimoEstadoSensor = digitalRead(SENSOR_PIN); // Lê o estado inicial
@@ -89,7 +104,7 @@ void setup() {
   setupWifi();
 
   // Inicia o cliente WebSocket
-  webSocket.begin(SERVER_HOST, SERVER_PORT, SERVER_PATH);
+  webSocket.begin(SERVER_HOST.c_str(), SERVER_PORT, SERVER_PATH.c_str());
   
   // Define a função que vai cuidar dos eventos
   webSocket.onEvent(webSocketEvent);
@@ -104,6 +119,24 @@ void setup() {
  * @brief Verifica o estado do sensor e envia o "pulso" se houver mudança
  */
 void checarSensor() {
+#if MOCK_MODE
+  // --- Modo Mock: envia dados simulados alternando entre DETECTADO e NORMALIZADO ---
+  static unsigned long lastMockTime = 0;
+  static bool mockState = false;
+  unsigned long now = millis();
+  if (now - lastMockTime > 2000) { // a cada 2 segundos
+    mockState = !mockState;
+    if (mockState) {
+      Serial.println("[MOCK] PULSO DETECTADO! (Simulado)");
+      webSocket.sendTXT("PULSO:DETECTADO");
+    } else {
+      Serial.println("[MOCK] PULSO NORMALIZADO! (Simulado)");
+      webSocket.sendTXT("PULSO:NORMALIZADO");
+    }
+    lastMockTime = now;
+  }
+#else
+  // --- Modo Real: lê o sensor normalmente ---
   bool estadoAtualSensor = digitalRead(SENSOR_PIN);
 
   // Verifica se o estado MUDOU (detecção de borda/pulso)
@@ -131,6 +164,7 @@ void checarSensor() {
       webSocket.sendTXT("PULSO:NORMALIZADO");
     }
   }
+#endif
 }
 
 /**
